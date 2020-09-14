@@ -46,22 +46,12 @@ func subCmdConfigure() error {
 	var config Config
 	// Load the config file if exist
 	if _, serr := os.Stat(configFilePath); !os.IsNotExist(serr) {
-		file, serr := os.Open(configFilePath)
+		data, serr := ioutil.ReadFile(configFilePath)
 		if serr != nil {
-			return fmt.Errorf("configure: load: %v", serr)
-		}
-		data, serr := ioutil.ReadAll(file)
-		if serr != nil {
-			if terr := file.Close(); terr != nil {
-				serr = fmt.Errorf("%v, originally: %v", terr, serr)
-			}
 			return fmt.Errorf("configure: load: %v", serr)
 		}
 		serr = json.Unmarshal(data, &config)
 		if serr != nil {
-			if terr := file.Close(); terr != nil {
-				serr = fmt.Errorf("%v, originally: %v", terr, serr)
-			}
 			return fmt.Errorf("configure: load: %v", serr)
 		}
 	}
@@ -91,17 +81,9 @@ func subCmdConfigure() error {
 			return fmt.Errorf("configure: %s is not a directory, please remove it", configDirPath)
 		}
 	}
-	// Create (if not exists) and open the file
-	file, serr := os.OpenFile(configFilePath, os.O_CREATE|os.O_WRONLY, 0700)
+	// Create (if not exists) and write to the file
+	serr = ioutil.WriteFile(configFilePath, marshaled, 0700)
 	if serr != nil {
-		return fmt.Errorf("configure: %v", serr)
-	}
-	// Write to the file
-	_, serr = file.Write(marshaled)
-	if serr != nil {
-		if terr := file.Close(); terr != nil {
-			serr = fmt.Errorf("%v, originally: %v", terr, serr)
-		}
 		return fmt.Errorf("configure: %v", serr)
 	}
 	fmt.Println("Config updated")
