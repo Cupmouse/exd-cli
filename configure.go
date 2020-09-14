@@ -69,7 +69,7 @@ func subCmdConfigure() error {
 	}
 	if stat, serr := os.Stat(configDirPath); os.IsNotExist(serr) {
 		// Make a directory if it does not exist
-		serr = os.Mkdir(configDirPath, 0700)
+		serr = os.Mkdir(configDirPath, 0755)
 		if serr != nil {
 			return fmt.Errorf("configure: %v", serr)
 		}
