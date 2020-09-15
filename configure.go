@@ -7,7 +7,11 @@ import (
 	"os"
 	"os/user"
 	"path"
+
+	"github.com/exchangedataset/exdgo"
 )
+
+var config *Config
 
 // Config stores credentials and other configurable variables.
 type Config struct {
@@ -27,6 +31,35 @@ func getHomeDirectory() (string, error) {
 	return envHome, nil
 }
 
+func initConfig() error {
+	homeDir, serr := getHomeDirectory()
+	if serr != nil {
+		return fmt.Errorf("initConfig: %v", serr)
+	}
+	configPath := path.Join(homeDir, configDirectoryName, configFileName)
+	if _, serr := os.Stat(configPath); os.IsNotExist(serr) {
+		return fmt.Errorf("initConfig: config has not yet setup. please run '%s configure'", os.Args[0])
+	} else if serr != nil {
+		return fmt.Errorf("initConfig: %v", serr)
+	}
+	data, serr := ioutil.ReadFile(configPath)
+	if serr != nil {
+		return fmt.Errorf("initConfig: %v", serr)
+	}
+	config = new(Config)
+	serr = json.Unmarshal(data, config)
+	if serr != nil {
+		return fmt.Errorf("initConfig: %v", serr)
+	}
+	return nil
+}
+
+func makeClientParam() exdgo.ClientParam {
+	var cp exdgo.ClientParam
+	cp.APIKey = config.APIKey
+	return cp
+}
+
 func maskAPIKey(apikey string) string {
 	if len(apikey) > 10 {
 		return apikey[:7] + "..."
@@ -34,58 +67,81 @@ func maskAPIKey(apikey string) string {
 	return apikey
 }
 
-func subCmdConfigure() error {
+func subCmdConfigure() (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("configure: %v", err)
+		}
+	}()
+
 	// Get the home directory of the current user and setup paths
-	homeDir, serr := getHomeDirectory()
-	if serr != nil {
-		return fmt.Errorf("configure: %v", serr)
+	homeDir, err := getHomeDirectory()
+	if err != nil {
+		return
 	}
 	configDirPath := path.Join(homeDir, configDirectoryName)
 	configFilePath := path.Join(configDirPath, configFileName)
 
 	var config Config
 	// Load the config file if exist
-	if _, serr := os.Stat(configFilePath); !os.IsNotExist(serr) {
-		data, serr := ioutil.ReadFile(configFilePath)
-		if serr != nil {
-			return fmt.Errorf("configure: load: %v", serr)
+	// Ignoring a stat error is intentional
+	if _, err := os.Stat(configFilePath); !os.IsNotExist(err) {
+		data, err := ioutil.ReadFile(configFilePath)
+		if err != nil {
+			return fmt.Errorf("load: %v", err)
 		}
-		serr = json.Unmarshal(data, &config)
-		if serr != nil {
-			return fmt.Errorf("configure: load: %v", serr)
+		err = json.Unmarshal(data, &config)
+		if err != nil {
+			return fmt.Errorf("load: %v", err)
 		}
 	}
 
-	fmt.Println("Enter your Exchangedataset credentials")
-	fmt.Println("^C to cancel")
-	fmt.Printf("API-key[%s]: ", maskAPIKey(config.APIKey))
-	fmt.Scanln(&config.APIKey)
+	_, err = fmt.Println("Enter your Exchangedataset credentials")
+	if err != nil {
+		return
+	}
+	_, err = fmt.Println("^C to cancel")
+	if err != nil {
+		return
+	}
+	_, err = fmt.Printf("API-key[%s]: ", maskAPIKey(config.APIKey))
+	if err != nil {
+		return
+	}
+	_, err = fmt.Scanln(&config.APIKey)
+	if err != nil {
+		return
+	}
 
-	fmt.Printf("Writing to %s\n", configFilePath)
+	_, err = fmt.Printf("Writing to %s\n", configFilePath)
+	if err != nil {
+		return
+	}
 	// Marshal entered config
-	marshaled, serr := json.Marshal(config)
-	if serr != nil {
-		return fmt.Errorf("configure: %v", serr)
+	marshaled, err := json.Marshal(config)
+	if err != nil {
+		return
 	}
-	if stat, serr := os.Stat(configDirPath); os.IsNotExist(serr) {
+	var stat os.FileInfo
+	if stat, err = os.Stat(configDirPath); os.IsNotExist(err) {
 		// Make a directory if it does not exist
-		serr = os.Mkdir(configDirPath, 0755)
-		if serr != nil {
-			return fmt.Errorf("configure: %v", serr)
+		err = os.Mkdir(configDirPath, 0755)
+		if err != nil {
+			return
 		}
 	} else {
-		if serr != nil {
-			return fmt.Errorf("configure: %v", serr)
+		if err != nil {
+			return
 		}
 		if !stat.IsDir() {
-			return fmt.Errorf("configure: %s is not a directory, please remove it", configDirPath)
+			return fmt.Errorf("%s is not a directory, please remove it", configDirPath)
 		}
 	}
 	// Create (if not exists) and write to the file
-	serr = ioutil.WriteFile(configFilePath, marshaled, 0700)
-	if serr != nil {
-		return fmt.Errorf("configure: %v", serr)
+	err = ioutil.WriteFile(configFilePath, marshaled, 0700)
+	if err != nil {
+		return
 	}
-	fmt.Println("Config updated")
-	return nil
+	_, err = fmt.Println("Config updated")
+	return
 }
