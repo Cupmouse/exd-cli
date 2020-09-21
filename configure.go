@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -12,6 +13,11 @@ import (
 )
 
 var config *Config
+
+const (
+	configDirectoryName = ".exd"
+	configFileName      = "config.json"
+)
 
 // Config stores credentials and other configurable variables.
 type Config struct {
@@ -67,7 +73,18 @@ func maskAPIKey(apikey string) string {
 	return apikey
 }
 
-func subCmdConfigure() (err error) {
+func subCmdConfigure(args []string) (err error) {
+	configureSubCmd := flag.NewFlagSet("configure", flag.ExitOnError)
+	configureSubCmd.Usage = func() {
+		fmt.Fprintln(configureSubCmd.Output(), "Usage of configure:")
+		fmt.Fprintln(configureSubCmd.Output(), "Configures Exchangedataset credentials used to access the API in interactive way.")
+	}
+	err = configureSubCmd.Parse(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("configure: %v", err)
