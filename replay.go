@@ -21,75 +21,6 @@ const (
 	fieldChannel   = "line_channel"
 )
 
-// Formatter formats lines.
-type Formatter interface {
-	// WriteTo write a formatted line to `sb`.
-	WriteTo(sb *bytes.Buffer, values map[string]interface{}) error
-}
-
-type formatterCSV struct {
-	// List of columns that should be included in order.
-	fields []string
-}
-
-func (f *formatterCSV) WriteTo(buf *bytes.Buffer, values map[string]interface{}) error {
-	for i, key := range f.fields {
-		if value, ok := values[key]; ok {
-			switch value.(type) {
-			case string:
-				// strings.Builder write functions always return a nil error
-				buf.WriteString(value.(string))
-			case float64:
-				str := strconv.FormatFloat(value.(float64), 'f', 10, 64)
-				buf.WriteString(str)
-			default:
-				return errors.New("csv WriteTo: type of value not supported")
-			}
-		}
-		if i != len(f.fields)-1 {
-			buf.WriteRune(',')
-		}
-	}
-	return nil
-}
-
-func newFormatterCSV(fields []string) *formatterCSV {
-	f := new(formatterCSV)
-	f.fields = fields
-	return f
-}
-
-type formatterJSON struct {
-	filter map[string]bool
-}
-
-func (f *formatterJSON) WriteTo(buf *bytes.Buffer, values map[string]interface{}) error {
-	filtered := values
-	if f.filter != nil {
-		filtered = make(map[string]interface{})
-		for key := range f.filter {
-			filtered[key] = values[key]
-		}
-	}
-	marshaled, serr := json.Marshal(filtered)
-	if serr != nil {
-		return serr
-	}
-	buf.Write(marshaled)
-	return nil
-}
-
-func newFormatterJSON(fields []string) *formatterJSON {
-	f := new(formatterJSON)
-	if fields != nil {
-		f.filter = make(map[string]bool)
-		for _, field := range fields {
-			f.filter[field] = true
-		}
-	}
-	return f
-}
-
 func makeReplayRequestParameter(optFilter *string, optStart *string, optEnd *string) (rrp exdgo.ReplayRequestParam, err error) {
 	if *optFilter == "" {
 		err = errors.New("--filter must be specified")
@@ -134,8 +65,9 @@ func subCmdReplay(args []string) (err error) {
 	optStart := flg.String("start", "", "Datetime. Set a start datetime of the stream.")
 	optEnd := flg.String("end", "", "Datetime. Set a end datetime of the stream.")
 	optFormat := flg.String("format", "", "Optinal. String. Set the output format. 'json', 'csv' are supported. Default is 'json'.")
-	optFields := flg.String("fields", "", "Optional. Set the field to be included.")
+	optFields := flg.String("fields", "", "Optional for 'json', required for 'csv'. Set the field to be included.")
 	optProgress := flg.Bool("progress", false, "Optional. Show progress in stderr. Default is false.")
+	optOnlyMsg := flg.Bool("only-msg", false, "Optional. Print only message type lines. Default is false.")
 	// Parse command flag/options
 	err = flg.Parse(args)
 	if err != nil {
@@ -150,13 +82,21 @@ func subCmdReplay(args []string) (err error) {
 	var fields []string
 	if *optFields != "" {
 		fields = strings.Split(*optFields, ",")
+	} else if *optFormat == "csv" {
+		return errors.New("--fields must be set if 'csv' format is specified")
 	}
+	progress := *optProgress
+	onlyMsg := *optOnlyMsg
 	var formatter Formatter
 	switch *optFormat {
-	default:
+	case "":
+		formatter = newFormatterJSON(fields)
+	case "json":
 		formatter = newFormatterJSON(fields)
 	case "csv":
 		formatter = newFormatterCSV(fields)
+	default:
+		return fmt.Errorf("--format: '%v' not supported", *optFormat)
 	}
 	// Setup FilterParam from flags/options
 	rrp, serr := makeReplayRequestParameter(optFilter, optStart, optEnd)
@@ -207,6 +147,9 @@ func subCmdReplay(args []string) (err error) {
 			err = serr
 			break
 		}
+		if onlyMsg && line.Type != exdgo.LineTypeMessage {
+			continue
+		}
 		// Prepare values map which contains all fields and its values to be formatted
 		var values map[string]interface{}
 		if line.Type == exdgo.LineTypeMessage {
@@ -215,22 +158,7 @@ func subCmdReplay(args []string) (err error) {
 			values = make(map[string]interface{})
 		}
 		values[fieldExchange] = line.Exchange
-		var typ string
-		switch line.Type {
-		case exdgo.LineTypeStart:
-			typ = "start"
-		case exdgo.LineTypeEnd:
-			typ = "end"
-		case exdgo.LineTypeError:
-			typ = "error"
-		case exdgo.LineTypeMessage:
-			typ = "message"
-		case exdgo.LineTypeSend:
-			typ = "send"
-		default:
-			typ = "!unknown"
-		}
-		values[fieldType] = typ
+		values[fieldType] = line.Type
 		timestamp := strconv.FormatInt(line.Timestamp, 10)
 		values[fieldTimestamp] = timestamp
 		// Channel might not be present
@@ -241,13 +169,12 @@ func subCmdReplay(args []string) (err error) {
 		if err != nil {
 			return
 		}
-		buf.WriteRune('\n')
 		_, err = os.Stdout.Write(buf.Bytes())
 		if err != nil {
 			return
 		}
 		buf.Reset()
-		if *optProgress {
+		if progress {
 			// Show progress
 			now := time.Now()
 			if pi%10000 == 0 && now.Sub(lastProgTime) >= time.Second {
@@ -261,7 +188,7 @@ func subCmdReplay(args []string) (err error) {
 			pi++
 		}
 	}
-	if *optProgress {
+	if progress {
 		// This will erase estimate line
 		// Ignore error
 		os.Stderr.Write([]byte{'\n'})

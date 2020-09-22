@@ -26,6 +26,7 @@ func main() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Subcommands of %v\n", os.Args[0])
 		fmt.Fprintln(flag.CommandLine.Output(), "  configure\tConfigure API-key and other credentials.")
 		fmt.Fprintln(flag.CommandLine.Output(), "  replay\tReplay historical data.")
+		fmt.Fprintln(flag.CommandLine.Output(), "  rapid\tHigh speed dump for a single channel.")
 	}
 	// Shows the usage if help flag is provided
 	flag.Parse()
@@ -44,6 +45,12 @@ func main() {
 	case "replay":
 		// Handle replay command
 		err := subCmdReplay(os.Args[2:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "rapid":
+		err := subCmdRapid(os.Args[2:])
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
