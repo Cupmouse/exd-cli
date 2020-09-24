@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -43,6 +44,8 @@ type rapidDownloadResult struct {
 type rapidDownload struct {
 	// Formatter used to format the response
 	form Formatter
+	// Definition of the message
+	msgDef map[string]string
 	// exdgo.Client used to call HTTPFilter
 	c *exdgo.Client
 	// This struct will be used to provide a parameter to HTTPFilter many times by modifying the `minute` value
@@ -94,12 +97,21 @@ func (r *rapidDownload) rapidDownload(ctx context.Context, fp exdgo.FilterParam,
 	beforeStartLine := false
 	for _, line := range lines {
 		if line.Type == exdgo.LineTypeMessage {
+			if beforeStartLine {
+				// Skip definition
+				continue
+			}
 			err = json.Unmarshal(line.Message, &values)
 			if err != nil {
 				return
 			}
-		} else if beforeStartLine && line.Type == exdgo.LineTypeStart {
-			beforeStartLine = false
+			for key, typ := range r.msgDef {
+				if val, ok := values[key]; ok && val != nil && typ == "int" {
+					values[key] = int64(val.(float64))
+				}
+			}
+		} else if line.Type == exdgo.LineTypeStart {
+			beforeStartLine = true
 			continue
 		}
 		values[fieldExchange] = line.Exchange
@@ -294,7 +306,7 @@ func (r *rapidDownload) Close() error {
 }
 
 // newRapidDownload makes new rapidDownload and spawns a manager routine.
-func newRapidDownload(ctx context.Context, c *exdgo.Client, parallelCount int, exchange string, channel string, start time.Time, end time.Time, form Formatter) (r *rapidDownload) {
+func newRapidDownload(ctx context.Context, c *exdgo.Client, parallelCount int, exchange string, channel string, start time.Time, end time.Time, msgDef map[string]string, form Formatter) (r *rapidDownload) {
 	r = new(rapidDownload)
 	r.ctx, r.cancelCtx = context.WithCancel(ctx)
 	r.c = c
@@ -307,12 +319,24 @@ func newRapidDownload(ctx context.Context, c *exdgo.Client, parallelCount int, e
 		End:      &end,
 		Format:   &format,
 	}
+	r.msgDef = msgDef
 	r.form = form
 	r.err = make(chan error)
 	r.out = make(chan *bytes.Buffer)
 	r.ret = make(chan *bytes.Buffer)
 	go r.manager()
 	return
+}
+
+func sortDefinitionKeys(def map[string]string) []string {
+	keys := make([]string, len(def))
+	i := 0
+	for key := range def {
+		keys[i] = key
+		i++
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func subCmdRapid(args []string) (err error) {
@@ -322,7 +346,7 @@ func subCmdRapid(args []string) (err error) {
 	optStart := flg.String("start", "", "Datetime. Set a start datetime of the stream.")
 	optEnd := flg.String("end", "", "Datetime. Set a end datetime of the stream.")
 	optFormat := flg.String("format", "", "Optinal. String. Set the output format. 'json', 'csv' are supported. Default is 'json'.")
-	optParalell := flg.Int("paralell", 20, "Int. Set how much filter request will be run in paralell. Higher is faster, but limited by the sequential processing and the computational power.")
+	optParalell := flg.Int("paralell", 50, "Optional. Int. Set how much filter request will be run in paralell. Higher is faster, but limited by the sequential processing and the computational power. Default is 50.")
 	optFields := flg.String("fields", "", "String. Optional. List of fields to be included separated by ','.")
 
 	err = flg.Parse(args)
@@ -417,7 +441,7 @@ func subCmdRapid(args []string) (err error) {
 		i++
 		fields[i] = fieldChannel
 		i++
-		for field := range def {
+		for _, field := range sortDefinitionKeys(def) {
 			fields[i] = field
 			i++
 		}
@@ -443,6 +467,11 @@ func subCmdRapid(args []string) (err error) {
 		if err != nil {
 			return fmt.Errorf("snapshot: %v", err)
 		}
+		for key, typ := range def {
+			if val, ok := values[key]; ok && typ == "int" {
+				values[key] = int64(val.(float64))
+			}
+		}
 		values[fieldType] = exdgo.LineTypeMessage
 		values[fieldExchange] = exchange
 		values[fieldChannel] = ss[i].Channel
@@ -464,7 +493,7 @@ func subCmdRapid(args []string) (err error) {
 	buf = nil
 	bufSlice = nil
 	// Fetch and output in paralell
-	rd := newRapidDownload(context.Background(), c, paralellCount, exchange, channel, start, end, form)
+	rd := newRapidDownload(context.Background(), c, paralellCount, exchange, channel, start, end, def, form)
 	defer func() {
 		serr := rd.Close()
 		if serr != nil {
